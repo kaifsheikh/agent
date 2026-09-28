@@ -5,62 +5,74 @@ from litellm import models_by_provider
 
 ENV_FILE = ".env"
 
-# Provider ka naam → .env variable ka naam
-PROVIDER_ENV_MAP = {
-    "openai":       "OPENAI_API_KEY",
-    "gemini":       "GEMINI_API_KEY",
-    "anthropic":    "ANTHROPIC_API_KEY",
-    "groq":         "GROQ_API_KEY",
-    "mistral":      "MISTRAL_API_KEY",
-    "openrouter":   "OPENROUTER_API_KEY",
-    "huggingface":  "HUGGINGFACE_API_KEY",
-    "cloudflare":   "CLOUDFLARE_API_KEY",
-    "zhipuai":      "ZHIPUAI_API_KEY",
-    "cohere":       "COHERE_API_KEY",
-    "xai":          "XAI_API_KEY",
-    "deepseek":     "DEEPSEEK_API_KEY",
-    "together_ai":  "TOGETHERAI_API_KEY",
-    "ai21":         "AI21_API_KEY",
-    "voyage":       "VOYAGE_API_KEY",
-    "replicate":    "REPLICATE_API_KEY",
-}
+
+def get_litellm_providers():
+    """LiteLLM ke saare supported providers ki list return karta hai"""
+    return sorted(models_by_provider.keys())
 
 
 def list_available_providers():
-    """LiteLLM ke saare supported providers dikhata hai"""
-    providers = sorted(models_by_provider.keys())
-    print("\n📋 Available Providers:")
+    """LiteLLM ke saare supported providers dikhata hai (numbered)"""
+    providers = get_litellm_providers()
+    print("\n📋 LiteLLM Supported Providers:")
+    print("-" * 60)
     for i, p in enumerate(providers, 1):
-        print(f"   {i}. {p}")
+        print(f"   {i:>3}. {p}")
+    print("-" * 60)
+    print(f"   Total: {len(providers)} providers\n")
     return providers
+
+
+def resolve_provider(user_input: str):
+    """
+    User ke input ko LiteLLM ke exact provider naam se match karta hai.
+    Match mila to exact naam return karega, warna None.
+    """
+    providers = get_litellm_providers()
+
+    # Case-insensitive exact match
+    for p in providers:
+        if p.lower() == user_input.lower():
+            return p
+
+    # Koi match nahi mila
+    return None
+
+
+def suggest_similar(user_input: str, limit: int = 5):
+    """Agar exact match na mile to milte-julte naam suggest karta hai"""
+    providers = get_litellm_providers()
+    q = user_input.lower()
+    matches = [p for p in providers if q in p.lower()]
+    return matches[:limit]
+
+
+def generate_env_var_name(provider: str) -> str:
+    """
+    Provider ke naam se .env variable ka naam auto banata hai.
+    Example: "openai" → "OPENAI_API_KEY"
+             "together_ai" → "TOGETHER_AI_API_KEY"
+             "xai" → "XAI_API_KEY"
+    """
+    return provider.upper().replace("-", "_") + "_API_KEY"
 
 
 def save_key_to_env(env_var: str, api_key: str):
     """API key ko .env mein save/update karta hai"""
-    # Agar .env file nahi hai to bana dein
     if not Path(ENV_FILE).exists():
         Path(ENV_FILE).touch()
 
-    # Key save karein (agar pehle se hai to overwrite ho jayegi)
     set_key(ENV_FILE, env_var, api_key)
     print(f"✅ Key save ho gayi: {env_var} → {ENV_FILE}")
 
 
 def show_models(provider: str):
     """Provider ke saare models ki list dikhata hai"""
-    # LiteLLM mein provider ka naam match karein
-    provider_key = None
-    for k in models_by_provider.keys():
-        if k.lower() == provider.lower():
-            provider_key = k
-            break
-
-    if not provider_key:
-        print(f"⚠️  '{provider}' ke models LiteLLM mein nahi mile.")
-        print("   Shayad provider ka naam spelling galat hai.")
+    models = models_by_provider.get(provider, [])
+    if not models:
+        print(f"⚠️  '{provider}' ke koi models nahi mile.")
         return
 
-    models = models_by_provider.get(provider_key, [])
     print(f"\n📋 {provider.upper()} ke {len(models)} models:\n")
     for m in models:
         print(f"   • {m}")
@@ -72,39 +84,50 @@ def main():
     print("   🤖 AI Provider Setup — Models Explorer")
     print("=" * 60)
 
-    # 1) Provider ka naam poochein
+    # 1) Providers ki list dikhane ka option
     show_help = input("\n❓ Providers ki list dekhni hai? (y/n): ").strip().lower()
     if show_help == "y":
         list_available_providers()
 
-    provider = input("\n🔹 Provider ka naam likhein (e.g. openai, gemini, groq): ").strip().lower()
+    # 2) Provider ka naam poochein
+    provider_input = input("🔹 Provider ka naam likhein (e.g. openai, gemini, groq): ").strip()
 
-    if not provider:
+    if not provider_input:
         print("❌ Provider ka naam khali nahi ho sakta.")
         return
 
-    # 2) API key poochein
+    # 3) LiteLLM mein provider validate karein
+    provider = resolve_provider(provider_input)
+
+    if not provider:
+        print(f"\n❌ '{provider_input}' provider LiteLLM mein available NAHI hai.")
+        similar = suggest_similar(provider_input)
+        if similar:
+            print(f"   💡 Shayad aap yeh chahte the: {', '.join(similar)}")
+        else:
+            print("   💡 'y' likh kar saari providers ki list dekh lein.")
+        return
+
+    print(f"✅ Provider mila: {provider}")
+
+    # 4) API key poochein
     api_key = input(f"🔑 {provider.upper()} ki API Key daalein: ").strip()
 
     if not api_key:
         print("❌ API key khali nahi ho sakti.")
         return
 
-    # 3) .env variable ka naam dhoondein
-    env_var = PROVIDER_ENV_MAP.get(provider)
+    # 5) .env variable ka naam AUTO generate karein
+    env_var = generate_env_var_name(provider)
+    print(f"📝 Env variable naam (auto): {env_var}")
 
-    if not env_var:
-        # Agar mapping mein nahi hai to automatic bana dein
-        env_var = provider.upper().replace("-", "_") + "_API_KEY"
-        print(f"⚠️  '{provider}' mapping mein nahi tha, lekin yeh naam use karenge: {env_var}")
-
-    # 4) Key save karein
+    # 6) Key save karein
     save_key_to_env(env_var, api_key)
 
-    # 5) Environment mein bhi load karein (is session ke liye)
+    # 7) Environment mein bhi load karein (is session ke liye)
     os.environ[env_var] = api_key
 
-    # 6) Models dikhaein
+    # 8) Models dikhaein
     show_models(provider)
 
     print("=" * 60)
